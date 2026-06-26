@@ -1,0 +1,61 @@
+PR sketch: lightweight session labels spike
+
+Summary
+- Adds a minimal live-session label layer to zmx.
+- Labels are key=value string pairs attached to the running session daemon.
+- Intended for humans and tools/agents to identify and select sessions without encoding everything into the session name.
+- Naming follows Kubernetes label conventions: labels are for selection/identification, not arbitrary metadata.
+
+What this spike adds
+- New IPC tags:
+  - LabelGet
+  - LabelSet
+  - LabelUnset
+  - LabelClear
+  - LabelData
+- New CLI surface:
+  - zmx label get [session]
+  - zmx label set [session] k=v ...
+  - zmx label unset [session] key ...
+  - zmx label clear [session]
+- Session resolution behavior:
+  - if no session argument is given, resolve from ZMX_SESSION
+  - if session argument is ".", also resolve from ZMX_SESSION
+- Daemon-side in-memory label map for each live session.
+
+Intended UX
+- From inside a zmx-managed shell:
+  - zmx label set . status=busy project=jbang
+  - zmx label get .
+  - zmx label unset . status
+- From outside:
+  - zmx label set build-1 role=release target=homebrew
+
+Why separate IPC tags
+- Current ipc.Info is explicitly frozen in zmx.
+- This spike avoids extending Info and instead uses additive tags for compatibility.
+
+Current limitations / caveats
+- This is a spike, not a finished patch.
+- It was pushed without local compile/test on this host because zig is not installed here.
+- Likely follow-up cleanup areas:
+  - verify Zig API exactness for ArgIterator usage
+  - verify StringHashMap ownership/update semantics
+  - tighten CLI parsing edge cases
+  - add help text/completions coverage cleanly
+  - likely add list --labels and/or list --where in a follow-up instead of this first spike
+- Labels are intentionally live-session scoped only, not persisted after session death.
+
+Suggested next steps
+1. Build and run locally with zig installed.
+2. Fix any compile issues from the rough spike.
+3. Decide whether to keep only label get/set/unset first and defer clear.
+4. If the concept feels right, follow with:
+   - zmx list --labels
+   - zmx list --where key=value
+   - attach/run-time label assignment
+
+Intent
+- Keep zmx small.
+- Add just enough structure for session discovery and lightweight coordination.
+- Avoid turning zmx into a workflow engine or state database.
