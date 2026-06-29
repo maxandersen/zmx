@@ -1,0 +1,18 @@
+PR sketch: lightweight session labels spike
+
+Summary
+- Adds a minimal live-session label layer to zmx.
+- Labels are key=value string pairs attached to the running session daemon.
+- Intended for humans and tools/agents to identify and select sessions.
+- Naming follows Kubernetes label conventions.
+
+What this spike adds
+- IPC tags: LabelGet, LabelSet, LabelUnset, LabelClear, LabelData
+- CLI: zmx label get/set/unset/clear [session] [k=v...]
+- zmx list --labels (now default), --no-labels, --where key=value, --where key~=pattern
+- Built-in fields (name, start_dir, cmd) queryable via --where without setting labels
+- Shell completions for bash, zsh, fish, nu
+- Efficient label fetching: Info + LabelGet batched on same socket connection
+- Friendly error messages for old daemons, missing sessions, missing ZMX_SESSION
+
+GitHub issue: https://github.com/neurosnap/zmx/issues/183
