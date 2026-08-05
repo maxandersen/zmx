@@ -2,9 +2,10 @@ name: Windows
 
 on:
   push:
-    branches: [main]
+    branches: [main, windows]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   # ── Stage 1: unit tests on the zmx Zig code ──────────────────────
