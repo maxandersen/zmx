@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const is_windows = builtin.os.tag == .windows;
 const build_options = @import("build_options");
 const ghostty_vt = @import("ghostty-vt");
 const ipc = @import("ipc.zig");
@@ -6,16 +8,20 @@ const log = @import("log.zig");
 const completions = @import("completions.zig");
 const util = @import("util.zig");
 const cross = @import("cross.zig");
-const socket = @import("socket.zig");
+const socket = if (is_windows) void else @import("socket.zig");
 const label = @import("label.zig");
-const lib_posix = @import("posix.zig");
+const lib_posix = if (is_windows) void else @import("posix.zig");
 const signal = @import("signal.zig");
 const Cfg = @import("cfg.zig");
-const loop = @import("loop.zig");
-const Client = loop.Client;
-const Daemon = loop.Daemon;
+const loop = if (is_windows) void else @import("loop.zig");
+const Client = if (is_windows) void else loop.Client;
+const Daemon = if (is_windows) void else loop.Daemon;
 const version = build_options.version;
 const ghostty_version = build_options.ghostty_version;
+
+// Windows-specific imports
+const win_host = if (is_windows) @import("windows/host.zig") else void;
+const win_pipe_ipc = if (is_windows) @import("windows/pipe_ipc.zig") else void;
 
 pub const std_options: std.Options = .{
     .logFn = log.zmxLogFn,
@@ -46,11 +52,40 @@ pub fn main(init: std.process.Init) !void {
     try log.log_system.init(io, log_path, log_mode);
     defer log.log_system.deinit();
 
-    const shell_env = init.environ_map.get("SHELL") orelse "/bin/sh";
+    const shell_env = if (is_windows)
+        init.environ_map.get("COMSPEC") orelse "cmd.exe"
+    else
+        init.environ_map.get("SHELL") orelse "/bin/sh";
 
     const cmd = args.next() orelse {
         return list(gpa, io, &cfg, false);
     };
+
+    // Windows-only: internal session host subcommand
+    if (is_windows and std.mem.eql(u8, cmd, "__host")) {
+        const sesh_name = args.next() orelse return error.SessionNameRequired;
+        var host_cmd_args: std.ArrayList([]const u8) = .empty;
+        defer host_cmd_args.deinit(gpa);
+        var past_separator = false;
+        while (args.next()) |arg| {
+            if (!past_separator and std.mem.eql(u8, arg, "--")) {
+                past_separator = true;
+                continue;
+            }
+            if (past_separator) {
+                try host_cmd_args.append(gpa, arg);
+            }
+        }
+        const size = ipc.getTerminalSize(0);
+        return win_host.hostMain(
+            gpa,
+            sesh_name,
+            host_cmd_args.items,
+            null,
+            size.cols,
+            size.rows,
+        );
+    }
 
     if (std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "v") or std.mem.eql(u8, cmd, "-v") or std.mem.eql(u8, cmd, "--version")) {
         return printVersion(io, &cfg);

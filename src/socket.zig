@@ -1,5 +1,7 @@
 const std = @import("std");
-const lib_posix = @import("posix.zig");
+const builtin = @import("builtin");
+const is_windows = builtin.os.tag == .windows;
+const lib_posix = if (is_windows) void else @import("posix.zig");
 
 pub fn getSeshPrefix() []const u8 {
     return lib_posix.getenv("ZMX_SESSION_PREFIX") orelse "";
@@ -15,10 +17,11 @@ pub fn getSeshName(alloc: std.mem.Allocator, sesh: []const u8) ![]const u8 {
         return error.SessionNameRequired;
     }
     const full = try std.fmt.allocPrint(alloc, "{s}{s}", .{ prefix, sesh });
-    // Session names become filenames under socket_dir. Rejecting path
-    // separators and dot-dot prevents socket creation and stale-socket
-    // deletion from operating outside that directory.
+    // Session names become filenames under socket_dir (or pipe names on Windows).
+    // Rejecting path separators and dot-dot prevents socket creation and
+    // stale-socket deletion from operating outside that directory.
     if (std.mem.indexOfScalar(u8, full, '/') != null or
+        std.mem.indexOfScalar(u8, full, '\\') != null or
         std.mem.indexOfScalar(u8, full, 0) != null or
         std.mem.eql(u8, full, ".") or std.mem.eql(u8, full, ".."))
     {

@@ -4,7 +4,9 @@
 pub const Cfg = @This();
 
 const std = @import("std");
-const lib_posix = @import("posix.zig");
+const builtin = @import("builtin");
+const is_windows = builtin.os.tag == .windows;
+const lib_posix = if (is_windows) void else @import("posix.zig");
 const cross = @import("cross.zig");
 
 socket_dir: []const u8,
@@ -19,12 +21,12 @@ pub fn init(alloc: std.mem.Allocator, io: std.Io) !Cfg {
     const log_dir = try logDir(alloc);
     errdefer alloc.free(log_dir);
 
-    const dir_mode = if (lib_posix.getenv("ZMX_DIR_MODE")) |m|
+    const dir_mode = if (getEnv("ZMX_DIR_MODE")) |m|
         std.fmt.parseInt(u32, m, 8) catch 0o750
     else
         0o750;
 
-    const log_mode = if (lib_posix.getenv("ZMX_LOG_MODE")) |m|
+    const log_mode = if (getEnv("ZMX_LOG_MODE")) |m|
         std.fmt.parseInt(u32, m, 8) catch 0o640
     else
         0o640;
@@ -41,7 +43,29 @@ pub fn init(alloc: std.mem.Allocator, io: std.Io) !Cfg {
     return cfg;
 }
 
+/// Cross-platform getenv wrapper.
+fn getEnv(key: []const u8) ?[:0]const u8 {
+    if (is_windows) {
+        // On Windows, use std.process (env vars are wide strings)
+        // For comptime-known keys we can use the C runtime
+        return std.c.getenv(@ptrCast(key.ptr));
+    } else {
+        return lib_posix.getenv(key);
+    }
+}
+
 fn socketDir(alloc: std.mem.Allocator) ![]const u8 {
+    if (is_windows) {
+        // Windows: %LOCALAPPDATA%\zmx\sessions (or %TEMP%\zmx)
+        if (getEnv("ZMX_DIR")) |zmxdir|
+            return try alloc.dupe(u8, zmxdir);
+        if (getEnv("LOCALAPPDATA")) |local|
+            return try std.fmt.allocPrint(alloc, "{s}\\zmx\\sessions", .{local});
+        if (getEnv("TEMP")) |tmp|
+            return try std.fmt.allocPrint(alloc, "{s}\\zmx", .{tmp});
+        return try alloc.dupe(u8, "C:\\zmx");
+    }
+
     const tmpdir = std.mem.trimEnd(u8, lib_posix.getenv("TMPDIR") orelse "/tmp", "/");
     const uid = lib_posix.getuid();
 
@@ -56,6 +80,16 @@ fn socketDir(alloc: std.mem.Allocator) ![]const u8 {
 }
 
 fn logDir(alloc: std.mem.Allocator) ![]const u8 {
+    if (is_windows) {
+        if (getEnv("ZMX_DIR")) |zmxdir|
+            return try std.fmt.allocPrint(alloc, "{s}\\logs", .{zmxdir});
+        if (getEnv("LOCALAPPDATA")) |local|
+            return try std.fmt.allocPrint(alloc, "{s}\\zmx\\logs", .{local});
+        if (getEnv("TEMP")) |tmp|
+            return try std.fmt.allocPrint(alloc, "{s}\\zmx\\logs", .{tmp});
+        return try alloc.dupe(u8, "C:\\zmx\\logs");
+    }
+
     const log_dir = if (lib_posix.getenv("ZMX_DIR")) |zmxdir|
         try std.fmt.allocPrint(alloc, "{s}/logs", .{zmxdir})
     else if (lib_posix.getenv("XDG_STATE_HOME")) |xdg_state_home|
@@ -101,6 +135,7 @@ fn mkdirAll(io: std.Io, sub_dir_path: []const u8, permissions: std.Io.Dir.Permis
 }
 
 test "Cfg.init uses default modes when env vars are not set" {
+    if (is_windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
 
     // Ensure they are not set
@@ -115,6 +150,7 @@ test "Cfg.init uses default modes when env vars are not set" {
 }
 
 test "Cfg.init uses custom modes from env vars" {
+    if (is_windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
 
     // Set custom octal values

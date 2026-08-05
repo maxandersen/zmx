@@ -22,7 +22,7 @@
 - Re-attaching to a session restores previous terminal state and output
 - Send commands to a session without attaching to it
 - Print scrollback history of a terminal session in plain text
-- Works on mac and linux
+- Works on macOS, Linux, and Windows
 - This project does **NOT** provide windows, tabs, or splits
 
 ## demos
@@ -38,6 +38,7 @@
 - https://zmx.sh/a/zmx-0.7.0-linux-x86_64.tar.gz
 - https://zmx.sh/a/zmx-0.7.0-macos-aarch64.tar.gz
 - https://zmx.sh/a/zmx-0.7.0-macos-x86_64.tar.gz
+- https://zmx.sh/a/zmx-0.7.0-windows-x86_64.zip
 
 ### homebrew
 
@@ -89,6 +90,42 @@ Be sure to add `~/.local/bin` to your `PATH`:
 ```bash
 zig build -Doptimize=ReleaseSafe --prefix ~/.local
 ```
+
+## windows
+
+zmx runs natively on Windows using the ConPTY (Pseudoconsole) API. No WSL, Cygwin, or external multiplexer is required.
+
+### how it works
+
+On Windows, `zmx attach` launches a detached session-host process (`zmx.exe __host`) that:
+
+1. Creates a ConPTY pseudoconsole
+2. Spawns the shell (default: `%COMSPEC%`, typically `cmd.exe`) inside the ConPTY
+3. Listens for client connections via a Windows Named Pipe
+4. Relays I/O between the ConPTY and connected clients
+5. Uses a Job Object to manage the process tree for clean `zmx kill`
+
+The session host survives terminal close, client disconnect, and system restarts of the terminal emulator.
+
+### default shell
+
+- `SHELL` environment variable (if set)
+- `COMSPEC` environment variable (typically `C:\Windows\System32\cmd.exe`)
+- `cmd.exe` as fallback
+
+PowerShell works when specified explicitly: `zmx attach dev pwsh.exe`
+
+### runtime paths
+
+- Socket/session directory: `%LOCALAPPDATA%\zmx\sessions`
+- Log directory: `%LOCALAPPDATA%\zmx\logs`
+- Override both: set `ZMX_DIR`
+
+### limitations
+
+- Terminal state restoration uses ghostty-vt, which requires native Windows build of the ghostty dependency
+- Shell completions are available for bash/zsh/fish (PowerShell completion not yet implemented)
+- The `write` subcommand uses base64/printf which may not be available in all Windows shells
 
 ## usage
 

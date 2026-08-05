@@ -1,7 +1,9 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-pub const c = switch (builtin.os.tag) {
+pub const is_windows = builtin.os.tag == .windows;
+
+pub const c = if (is_windows) void else switch (builtin.os.tag) {
     .macos => @cImport({
         @cInclude("sys/ioctl.h"); // ioctl and constants
         @cInclude("termios.h");
@@ -23,7 +25,9 @@ pub const c = switch (builtin.os.tag) {
 };
 
 // Manually declare forkpty for macOS since util.h is not available during cross-compilation
-pub const forkpty = if (builtin.os.tag == .macos)
+pub const forkpty = if (is_windows)
+    void
+else if (builtin.os.tag == .macos)
     struct {
         extern "c" fn forkpty(master_fd: *c_int, name: ?[*:0]u8, termp: ?*const c.struct_termios, winp: ?*const c.struct_winsize) c_int;
     }.forkpty

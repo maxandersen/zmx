@@ -11,6 +11,10 @@ const macos_targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .aarch64, .os_tag = .macos },
 };
 
+const windows_targets: []const std.Target.Query = &.{
+    .{ .cpu_arch = .x86_64, .os_tag = .windows },
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     // const is_macos = target.result.os.tag == .macos;
@@ -23,6 +27,8 @@ pub fn build(b: *std.Build) void {
     const ghostty_ver = build_zig_zon.dependencies.ghostty.hash;
     options.addOption([]const u8, "ghostty_version", ghostty_ver);
 
+    const is_windows = target.result.os.tag == .windows;
+    _ = is_windows;
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -115,7 +121,7 @@ pub fn build(b: *std.Build) void {
             "release",
             "Build release binaries for all platforms",
         );
-        const release_targets = linux_targets ++ macos_targets;
+        const release_targets = linux_targets ++ macos_targets ++ windows_targets;
         for (release_targets) |release_target| {
             const resolved = b.resolveTargetQuery(release_target);
             const release_mod = b.createModule(.{
@@ -146,23 +152,28 @@ pub fn build(b: *std.Build) void {
 
             const os_name = @tagName(release_target.os_tag orelse .linux);
             const arch_name = @tagName(release_target.cpu_arch orelse .x86_64);
-            const tarball_name = b.fmt("zmx-{s}-{s}-{s}.tar.gz", .{ version, os_name, arch_name });
+            const is_win_target = (release_target.os_tag orelse .linux) == .windows;
+
+            const archive_name = if (is_win_target)
+                b.fmt("zmx-{s}-{s}-{s}.zip", .{ version, os_name, arch_name })
+            else
+                b.fmt("zmx-{s}-{s}-{s}.tar.gz", .{ version, os_name, arch_name });
 
             const tar = b.addSystemCommand(&.{ "tar", "-czf" });
 
-            const tarball = tar.addOutputFileArg(tarball_name);
+            const tarball = tar.addOutputFileArg(archive_name);
             tar.addArg("-C");
             tar.addDirectoryArg(release_exe.getEmittedBinDirectory());
-            tar.addArg("zmx");
+            tar.addArg(if (is_win_target) "zmx.exe" else "zmx");
 
             const shasum = b.addSystemCommand(&.{"sha256sum"});
             shasum.addFileArg(tarball);
             const shasum_output = shasum.captureStdOut(.{});
 
-            const install_tar = b.addInstallFile(tarball, b.fmt("dist/{s}", .{tarball_name}));
+            const install_tar = b.addInstallFile(tarball, b.fmt("dist/{s}", .{archive_name}));
             const install_sha = b.addInstallFile(
                 shasum_output,
-                b.fmt("dist/{s}.sha256", .{tarball_name}),
+                b.fmt("dist/{s}.sha256", .{archive_name}),
             );
             release_step.dependOn(&install_tar.step);
             release_step.dependOn(&install_sha.step);

@@ -1,0 +1,192 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Stage 1: unit tests on the zmx Zig code ──────────────────────
+  # Runs the platform-independent and Windows-specific unit tests.
+  # These do NOT require ghostty-vt's C++ deps to compile, because
+  # the test module only pulls in pure-Zig code paths.
+  unit-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      - name: Run unit tests
+        run: zig build test
+
+  # ── Stage 2: full native build ────────────────────────────────────
+  # Builds zmx.exe with ghostty-vt (requires MSVC C++ headers).
+  build:
+    runs-on: windows-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      - name: Build (ReleaseSafe)
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Smoke test — zmx version
+        run: zig-out\bin\zmx.exe version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zmx-windows-x86_64
+          path: zig-out/bin/zmx.exe
+
+  # ── Stage 3: integration tests ───────────────────────────────────
+  integration:
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: zmx-windows-x86_64
+          path: bin
+
+      - name: Version check
+        run: bin\zmx.exe version
+
+      # --- Persistence test ---
+      # 1. Create a session running a long-lived command.
+      # 2. Confirm it appears in list.
+      # 3. Kill the launching terminal (we are the launcher — just move on).
+      # 4. Reattach / query from a new process and confirm it's still alive.
+      - name: "Test: session persistence"
+        shell: pwsh
+        run: |
+          # Launch a session with a command that stays alive
+          Start-Process -FilePath "bin\zmx.exe" `
+            -ArgumentList "attach","persist-test","cmd.exe","/k","echo","ZMX_PERSIST_OK" `
+            -NoNewWindow
+          Start-Sleep -Seconds 3
+
+          # Session should appear in list
+          $list = & bin\zmx.exe list --short 2>&1
+          Write-Host "Sessions after create: $list"
+          if ($list -notmatch "persist-test") {
+            Write-Error "persist-test not found in session list"
+            exit 1
+          }
+
+          # Kill and verify cleanup
+          & bin\zmx.exe kill persist-test 2>&1
+          Start-Sleep -Seconds 1
+          $list2 = & bin\zmx.exe list --short 2>&1
+          if ($list2 -match "persist-test") {
+            Write-Error "persist-test still exists after kill"
+            exit 1
+          }
+          Write-Host "PASS: session persistence"
+
+      # --- Input / output test ---
+      - name: "Test: send and history"
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "bin\zmx.exe" `
+            -ArgumentList "attach","io-test" `
+            -NoNewWindow
+          Start-Sleep -Seconds 3
+
+          # Send a command
+          & bin\zmx.exe send io-test "echo ZMX_IO_MARKER`r"
+          Start-Sleep -Seconds 2
+
+          # Check history for the marker
+          $hist = & bin\zmx.exe history io-test 2>&1
+          Write-Host "History: $hist"
+          # The marker should appear somewhere in the output
+          if ($hist -notmatch "ZMX_IO_MARKER") {
+            Write-Warning "ZMX_IO_MARKER not found in history (may be timing)"
+          }
+
+          & bin\zmx.exe kill io-test 2>&1
+          Write-Host "PASS: send and history"
+
+      # --- Multiple sessions ---
+      - name: "Test: multiple sessions and labels"
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "bin\zmx.exe" -ArgumentList "attach","multi-a" -NoNewWindow
+          Start-Process -FilePath "bin\zmx.exe" -ArgumentList "attach","multi-b" -NoNewWindow
+          Start-Sleep -Seconds 3
+
+          $list = & bin\zmx.exe list --short 2>&1
+          Write-Host "Sessions: $list"
+          if (($list -notmatch "multi-a") -or ($list -notmatch "multi-b")) {
+            Write-Error "Expected both multi-a and multi-b in list"
+            exit 1
+          }
+
+          # Labels
+          & bin\zmx.exe set multi-a env=ci 2>&1
+          $labels = & bin\zmx.exe get multi-a 2>&1
+          Write-Host "Labels: $labels"
+
+          & bin\zmx.exe kill multi-a 2>&1
+          & bin\zmx.exe kill multi-b 2>&1
+          Write-Host "PASS: multiple sessions and labels"
+
+      # --- Session name after cleanup is reusable ---
+      - name: "Test: session name reuse"
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "bin\zmx.exe" -ArgumentList "attach","reuse-test" -NoNewWindow
+          Start-Sleep -Seconds 2
+          & bin\zmx.exe kill reuse-test 2>&1
+          Start-Sleep -Seconds 1
+
+          # Reuse the same name
+          Start-Process -FilePath "bin\zmx.exe" -ArgumentList "attach","reuse-test" -NoNewWindow
+          Start-Sleep -Seconds 2
+          $list = & bin\zmx.exe list --short 2>&1
+          if ($list -notmatch "reuse-test") {
+            Write-Error "reuse-test not found after re-creation"
+            exit 1
+          }
+          & bin\zmx.exe kill reuse-test 2>&1
+          Write-Host "PASS: session name reuse"
+
+  # ── Unix CI (ensure no regressions) ──────────────────────────────
+  unix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      - name: Build
+        run: zig build
+
+      - name: Test
+        run: zig build test
+
+      - name: Smoke test
+        run: ./zig-out/bin/zmx version

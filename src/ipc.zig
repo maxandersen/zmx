@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const is_windows = builtin.os.tag == .windows;
 const cross = @import("cross.zig");
-const socket = @import("socket.zig");
-const lib_posix = @import("posix.zig");
+const socket = if (is_windows) void else @import("socket.zig");
+const lib_posix = if (is_windows) void else @import("posix.zig");
 
 pub const Tag = enum(u8) {
     Input = 0,
@@ -48,6 +50,20 @@ pub const Resize = packed struct {
 };
 
 pub fn getTerminalSize(fd: i32) Resize {
+    if (is_windows) {
+        const win32 = @import("windows/win32.zig");
+        const handle = win32.GetStdHandle(win32.STD_OUTPUT_HANDLE) orelse
+            return .{ .rows = 24, .cols = 120 };
+        var csbi: win32.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+        if (win32.GetConsoleScreenBufferInfo(handle, &csbi) != 0) {
+            const cols: u16 = @intCast(csbi.srWindow.Right - csbi.srWindow.Left + 1);
+            const rows: u16 = @intCast(csbi.srWindow.Bottom - csbi.srWindow.Top + 1);
+            if (rows > 0 and cols > 0)
+                return .{ .rows = rows, .cols = cols };
+        }
+        return .{ .rows = 24, .cols = 120 };
+    }
+
     var ws: cross.c.struct_winsize = undefined;
     if (cross.c.ioctl(fd, cross.c.TIOCGWINSZ, &ws) == 0 and ws.ws_row > 0 and ws.ws_col > 0) {
         return .{ .rows = ws.ws_row, .cols = ws.ws_col, .xpixel = ws.ws_xpixel, .ypixel = ws.ws_ypixel };
@@ -176,6 +192,21 @@ pub const SocketBuffer = struct {
             try self.buf.appendSlice(self.alloc, tmp[0..n]);
         }
         return n;
+    }
+
+    /// Append raw bytes into the buffer (used on Windows where we read via HANDLE).
+    pub fn appendData(self: *SocketBuffer, data: []const u8) !void {
+        if (self.head > 0) {
+            const remaining = self.buf.items.len - self.head;
+            if (remaining > 0) {
+                std.mem.copyForwards(u8, self.buf.items[0..remaining], self.buf.items[self.head..]);
+                self.buf.items.len = remaining;
+            } else {
+                self.buf.clearRetainingCapacity();
+            }
+            self.head = 0;
+        }
+        try self.buf.appendSlice(self.alloc, data);
     }
 
     /// Returns the next complete message or `null` when none available.
